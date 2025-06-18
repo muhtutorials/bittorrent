@@ -96,7 +96,7 @@ pub struct File {
     pub path: Vec<String>,
 }
 
-mod hashes {
+pub mod hashes {
     use serde::de::{Error, Visitor};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::fmt;
