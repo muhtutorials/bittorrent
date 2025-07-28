@@ -1,7 +1,7 @@
 use crate::BLOCK_MAX;
+use crate::dot_torrent::{DotTorrent, File, Key};
 use crate::peer::{MessageType, Peer, PieceResponse};
 use crate::piece::Piece;
-use crate::dot_torrent::{File, Key, DotTorrent};
 use crate::tracker::query_tracker;
 use anyhow::Context;
 use futures_util::StreamExt;

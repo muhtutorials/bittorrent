@@ -1,25 +1,29 @@
 use crate::bitfield::Bitfield;
-use crate::db::DB;
+use crate::db::FileDB;
 use crate::dot_torrent::DotTorrent;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-pub struct State<T: DB> {
-    db: T,
+pub struct State {
+    db: FileDB,
     // torrents' metadata, where key is info hash
-    pub data: HashMap<[u8; 20], SharedMetadata>,
+    pub data: BTreeMap<[u8; 20], SharedMetadata>,
 }
 
-impl<T: DB> State<T> {
-    pub fn new(mut db: T) -> anyhow::Result<Self> {
-        let data: HashMap<[u8; 20], Metadata> = serde_json::from_reader(&mut db)?;
+impl State {
+    pub fn new(db: FileDB) -> anyhow::Result<Self> {
+        let data: BTreeMap<[u8; 20], Metadata> = serde_json::from_slice(db.data())?;
         let data = data
             .into_iter()
             .map(|(k, v)| (k, Arc::new(Mutex::new(v))))
             .collect();
         Ok(Self { db, data })
+    }
+
+    pub fn save(&self) -> anyhow::Result<Self> {
+        
     }
 }
 

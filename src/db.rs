@@ -1,51 +1,57 @@
 use anyhow::Context;
 use sha2::{Digest, Sha256};
-use std::io::{Cursor, Read, Write};
 use std::path::PathBuf;
-use tokio::fs::OpenOptions;
-
-pub trait DB: Read + Write {
-}
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 
 #[derive(Clone)]
 pub struct FileDB {
     path: PathBuf,
-    data: Cursor<Vec<u8>>,
+    data: Vec<u8>,
     checksum: [u8; 32],
 }
 
 impl FileDB {
     pub async fn open(path: PathBuf) -> anyhow::Result<Self> {
         let mut file = OpenOptions::new()
-            .write(true)
             .create(true)
             .read(true)
             .open(&path)
             .await
             .context(format!("couldn't open `{}`", path.display()))?;
         let mut buf = Vec::new();
-        tokio::io::AsyncReadExt::read(&mut file, &mut buf).await?;
+        file.read(&mut buf).await?;
+        if buf.len() == 0 {
+            buf.extend("{}\n".as_bytes());
+        }
         let checksum = Sha256::digest(&buf).into();
         Ok(FileDB {
             path,
-            data: Cursor::new(buf),
+            data: buf,
             checksum,
         })
     }
-}
 
-impl Read for FileDB {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.data.read(buf)
+    pub async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        let mut hasher = Sha256::new();
+        hasher.update(buf);
+        hasher.update(b"\n");
+        let checksum = hasher.finalize().into();
+        if self.checksum == checksum {
+            return Ok(());
+        }
+        self.checksum = checksum;
+        let file = File::create(&self.path).await?;
+        let mut writer = BufWriter::new(file);
+        writer.write_all(buf).await?;
+        writer.write_all(b"\n").await?;
+        writer.flush().await?;
+        self.data.clear();
+        self.data.extend(buf);
+        Ok(())
     }
-}
 
-impl Write for FileDB {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.data.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.data.flush()
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 }

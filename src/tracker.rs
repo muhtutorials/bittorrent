@@ -4,7 +4,6 @@ use hex;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 // NOTE: `info_hash` field is not included.

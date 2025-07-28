@@ -1,4 +1,4 @@
-use crate::torrents::Torrent;
+use crate::torrent::Torrent;
 use anyhow::Context;
 use std::fmt::format;
 use std::io;
@@ -8,13 +8,14 @@ use tokio::net::TcpListener;
 
 pub struct Client {
     port: u16,
+    tcp_listener: TcpListener,
     torrents: Vec<Torrent>,
 }
 
 impl Client {
     // pub async fn new() -> anyhow::Result<Client> {
     //
-    //     let torrents: Vec<Torrent> = serde_json::fr?;
+    //     let torrents: Vec<Torrent> = serde_json::from?;
     //     Ok(Client { torrents })
     // }
     //

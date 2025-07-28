@@ -135,7 +135,7 @@ impl Peer {
                 })
                 .await
                 .with_context(|| format!("send request for block: {block_i}"))?;
-            // todo: timeout and return block to submit if timed out
+            // TODO: timeout and return block to submit if timed out
             let mut msg;
             loop {
                 msg = self
