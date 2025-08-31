@@ -1,26 +1,32 @@
-use crate::torrent::Torrent;
-use anyhow::Context;
-use std::fmt::format;
+use crate::db::FileDB;
+use crate::state::State;
+use crate::torrent::TorrentManager;
 use std::io;
-use tokio::fs::OpenOptions;
-use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 
 pub struct Client {
-    port: u16,
-    tcp_listener: TcpListener,
-    torrents: Vec<Torrent>,
+    listener: TcpListener,
+    state: State,
+    torrents: Vec<TorrentManager>,
 }
 
 impl Client {
     // pub async fn new() -> anyhow::Result<Client> {
-    //
-    //     let torrents: Vec<Torrent> = serde_json::from?;
-    //     Ok(Client { torrents })
-    // }
-    //
-    // pub async fn run(&self) -> anyhow::Result<()> {
     //     let listener = connect_to_available_port(6881, 9).await?;
+    //     let db = FileDB::open("./db.json".into());
+    //     let state = State::new(db)?;
+    //     let torrents = Vec::new();
+    //     for (hash, metadata) in &state.data {
+    //         let metadata = metadata.lock()?;
+    //         if !metadata.finished {
+    //
+    //         }
+    //     }
+    //
+    //     Ok(Client { listener, state })
+    // }
+
+    // pub async fn run(&self) -> anyhow::Result<()> {
     //     loop {
     //         let (stream, _) = listener.accept().await?;
     //         handle_stream(stream).await;

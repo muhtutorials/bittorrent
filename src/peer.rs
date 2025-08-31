@@ -1,4 +1,4 @@
-use crate::BLOCK_MAX;
+use crate::BLOCK_SIZE;
 use crate::bitfield::Bitfield;
 use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
@@ -13,9 +13,9 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 
 // so that we can respond from request from other side, also choking and unchoking other side
 pub(crate) struct Peer {
-    // addr: SocketAddrV4,
+    addr: SocketAddrV4,
     stream: Framed<TcpStream, MessageFramer>,
-    bitfield: Bitfield,
+    pieces: Bitfield,
     chocked: bool,
 }
 
@@ -46,14 +46,15 @@ impl Peer {
             .context("peer message was invalid")?;
         anyhow::ensure!(msg.typ == MessageType::Bitfield);
         Ok(Self {
+            addr,
             stream,
-            bitfield: Bitfield::from_payload(msg.payload),
+            pieces: Bitfield::from_vec(msg.payload),
             chocked: true,
         })
     }
 
     pub(crate) fn has_piece(&self, piece_i: usize) -> bool {
-        self.bitfield.has_piece(piece_i)
+        self.pieces.has(piece_i)
     }
 
     pub(crate) async fn participate(
@@ -117,14 +118,14 @@ impl Peer {
 
             let block_size = if block_i == n_blocks - 1 {
                 // calculate last block's size
-                let modulo = piece_size % BLOCK_MAX;
-                if modulo == 0 { BLOCK_MAX } else { modulo }
+                let modulo = piece_size % BLOCK_SIZE;
+                if modulo == 0 { BLOCK_SIZE } else { modulo }
             } else {
-                BLOCK_MAX
+                BLOCK_SIZE
             };
             let mut request = PieceRequest::new(
                 piece_i as u32,
-                (block_i * BLOCK_MAX) as u32,
+                (block_i * BLOCK_SIZE) as u32,
                 block_size as u32,
             );
             let request_bytes = Vec::from(request.as_bytes_mut());
@@ -174,7 +175,7 @@ impl Peer {
                         let piece_response = PieceResponse::ref_from_bytes(&msg.payload[..])
                             .expect("always get all `PieceResponse` fields from peer");
                         if piece_response.index() as usize != piece_i
-                            || piece_response.begin() as usize != block_i * BLOCK_MAX
+                            || piece_response.begin() as usize != block_i * BLOCK_SIZE
                         {
                             // piece that we no longer need/are responsible for
                         } else {

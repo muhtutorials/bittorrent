@@ -60,12 +60,12 @@ pub struct TrackerRequest {
 pub struct TrackerResponse {
     // Interval in seconds that the client should wait
     // between sending regular requests to the tracker
-    pub interval: usize,
+    pub interval: u64,
 
     // peers value may be a string consisting of multiples of 6 bytes.
     // First 4 bytes are the IP address and last 2 bytes are
     // the port number. All in network (big endian) notation.
-    pub peers: PeerList,
+    pub peers: PeerAddrs,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,9 +119,9 @@ pub fn url_encode(v: &[u8; 20]) -> String {
 }
 
 #[derive(Debug, Clone)]
-pub struct PeerList(pub Vec<SocketAddrV4>);
+pub struct PeerAddrs(pub Vec<SocketAddrV4>);
 
-impl Serialize for PeerList {
+impl Serialize for PeerAddrs {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -135,19 +135,19 @@ impl Serialize for PeerList {
     }
 }
 
-impl<'de> Deserialize<'de> for PeerList {
+impl<'de> Deserialize<'de> for PeerAddrs {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_bytes(PeerListVisitor)
+        deserializer.deserialize_bytes(PeerAddrsVisitor)
     }
 }
 
-struct PeerListVisitor;
+struct PeerAddrsVisitor;
 
-impl<'de> Visitor<'de> for PeerListVisitor {
-    type Value = PeerList;
+impl<'de> Visitor<'de> for PeerAddrsVisitor {
+    type Value = PeerAddrs;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(
@@ -162,7 +162,7 @@ impl<'de> Visitor<'de> for PeerListVisitor {
         if v.len() % 6 != 0 {
             return Err(E::custom(format!("length is {}", v.len())));
         }
-        Ok(PeerList(
+        Ok(PeerAddrs(
             v.chunks_exact(6)
                 .map(|slice_6| {
                     let ipv4 = Ipv4Addr::new(slice_6[0], slice_6[1], slice_6[2], slice_6[3]);

@@ -17,14 +17,12 @@ impl TorrentList {
     }
 
     pub async fn start(&mut self) -> anyhow::Result<()> {
-        for (info_hash, metadata) in &self.state.data {
-            // metadata passed to torrent is behind `Arc` and `Mutex`
-            let torrent = Torrent::new(info_hash.clone(), metadata.clone());
-            self.torrents.insert(info_hash.clone(), torrent);
+        for metadata in &self.state.data {
+
         }
-        for (_, torrent) in &mut self.torrents {
-            tokio::spawn(async { torrent.run().await });
-        }
+        // for (_, torrent) in &mut self.torrents {
+        //     tokio::spawn(async { torrent.run().await });
+        // }
         Ok(())
     }
 }

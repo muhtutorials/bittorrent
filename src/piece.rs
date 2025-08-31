@@ -11,22 +11,6 @@ pub struct Piece {
     peers: HashSet<usize>,
 }
 
-impl Ord for Piece {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.peers
-            .len()
-            .cmp(&other.peers.len())
-            // tie-break by random ordering of HashSet to avoid deterministic contention
-            .then(self.peers.iter().cmp(other.peers.iter()))
-    }
-}
-
-impl PartialOrd for Piece {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 impl Piece {
     pub(crate) fn new(index: usize, dot_torrent: &DotTorrent, peers: &[Peer]) -> Self {
         let length = if index == dot_torrent.info.pieces.0.len() - 1 {
@@ -63,5 +47,21 @@ impl Piece {
 
     pub(crate) fn peers(&self) -> &HashSet<usize> {
         &self.peers
+    }
+}
+
+impl Ord for Piece {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.peers
+            .len()
+            .cmp(&other.peers.len())
+            // tie-break by random ordering of HashSet to avoid deterministic contention
+            .then(self.peers.iter().cmp(other.peers.iter()))
+    }
+}
+
+impl PartialOrd for Piece {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }

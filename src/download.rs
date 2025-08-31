@@ -1,4 +1,4 @@
-use crate::BLOCK_MAX;
+use crate::BLOCK_SIZE;
 use crate::dot_torrent::{DotTorrent, File, Key};
 use crate::peer::{MessageType, Peer, PieceResponse};
 use crate::piece::Piece;
@@ -51,7 +51,6 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
             pieces_to_download.push(piece);
         }
     }
-    // TODO: handle unavailable pieces
     assert!(unavailable_pieces.is_empty());
 
     let mut downloaded_pieces = vec![0; dot_torrent.length()];
@@ -63,8 +62,8 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
             .collect();
 
         let piece_size = piece.length();
-        // "+ BLOCK_MAX - 1" rounds up the number
-        let n_blocks = (piece_size + BLOCK_MAX - 1) / BLOCK_MAX;
+        // "+ BLOCK_SIZE - 1" rounds up the number
+        let n_blocks = (piece_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let (job_tx, job_rx) = bounded_async(n_blocks);
         for block_i in 0..n_blocks {
             job_tx

@@ -1,4 +1,0 @@
-- add ids and checksum to db
-- add custom serializer and deserializer to state
-- deal with saving db
-- how to manage torrent

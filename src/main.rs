@@ -1,7 +1,4 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use bittorrent::client::Client;
+use std::io::Write;
 use bittorrent::create::create_torrent;
 use bittorrent::dot_torrent::DotTorrent;
 use clap::{Parser, Subcommand};
@@ -38,15 +35,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Create { path } => create_torrent(path).await?,
         Command::Test => {
-            let mut map = HashMap::new();
-            map.insert("one", 1);
-            map.insert("two", 2);
-            map.insert("three", 3);
-            map.insert("four", 4);
-            map.insert("five", 5);
-            for (k, v) in map {
-                println!("key: {k}, value: {v}");
-            }
+
         },
     }
     Ok(())

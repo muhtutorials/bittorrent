@@ -1,63 +1,121 @@
-use crate::bitfield::Bitfield;
+use std::collections::BinaryHeap;
 use crate::peer::Peer;
 use crate::state::SharedMetadata;
-use crate::tracker::PeerList;
-use crate::tracker::query_tracker;
-use futures_util::{StreamExt, stream};
+use crate::tracker::{PeerAddrs, query_tracker};
+use std::sync::Arc;
+use std::time::Duration;
+use futures_util::{stream, StreamExt};
+use tokio::net::TcpStream;
+use tokio::sync::{Mutex, Semaphore, mpsc, Notify};
+use tokio::time::sleep;
+use crate::piece::Piece;
+
+pub struct TorrentManager {
+    pub info_hash: [u8; 20],
+    pub stream_tx: mpsc::Sender<TcpStream>,
+}
+
+impl TorrentManager {
+    pub fn new(info_hash: [u8; 20], stream_tx: mpsc::Sender<TcpStream>) -> Self {
+        Self {
+            info_hash,
+            stream_tx,
+        }
+    }
+
+    // pub fn run() {
+    //     tokio::spawn()
+    // }
+}
 
 pub struct Torrent {
     pub info_hash: [u8; 20],
     pub metadata: SharedMetadata,
-    pub pieces: Bitfield,
-    pub interval: usize,
-    pub peer_list: PeerList,
-    pub uploaders: Vec<Peer>,
-    pub downloaders: Vec<Peer>,
+    // addresses of available peers sent by tracker
+    pub peer_addrs: SharedPeerAddrs,
+    pub peers: SharedPeers,
+    pub max_peers: Arc<Semaphore>,
+    // notifies after fetching peer addresses
+    notify: Arc<Notify>,
 }
 
 impl Torrent {
     pub fn new(info_hash: [u8; 20], metadata: SharedMetadata) -> Self {
-        let pieces = metadata.lock().unwrap().pieces.clone();
         Self {
             info_hash,
             metadata,
-            pieces,
-            interval: 0,
-            peer_list: PeerList(Vec::new()),
-            uploaders: Vec::new(),
-            downloaders: Vec::new(),
+            peer_addrs: Arc::new(Mutex::new(PeerAddrs(Vec::new()))),
+            peers: Arc::new(Mutex::new(Vec::new())),
+            max_peers: Arc::new(Semaphore::new(5)),
+            notify: Arc::new(Notify::new()),
         }
     }
 
     pub async fn run(&mut self) {
-        self.get_uploaders().await.unwrap();
+        tokio::spawn(heartbeat(self.metadata.clone(), self.peer_addrs.clone(), self.notify.clone()));
         let info_hash = self.info_hash.clone();
-        let mut stream = stream::iter(self.peer_list.0.iter())
-            .map(|peer_addr| async move {
-                let peer = Peer::new(*peer_addr, info_hash).await;
-                (peer_addr, peer)
-            })
-            .buffer_unordered(5);
-        let mut peers = Vec::new();
-        while let Some((peer_addr, peer)) = stream.next().await {
-            match peer {
-                Ok(peer) => {
-                    peers.push(peer);
-                    if peers.len() >= 5 {
-                        break;
+        loop {
+            self.notify.notified().await;
+            let peer_addrs = self.peer_addrs.lock().await;
+            let mut stream = stream::iter(peer_addrs.0.iter())
+                .map(|peer_addr| async move {
+                    let peer = Peer::new(*peer_addr, info_hash).await;
+                    (peer_addr, peer)
+                })
+                .buffer_unordered(self.max_peers.available_permits());
+            while let Some((peer_addr, peer)) = stream.next().await {
+                match peer {
+                    Ok(peer) => {
+                        let mut peers = self.peers.lock().await;
+                        peers.push(peer);
                     }
+                    Err(err) => println!("failed to connect to peer {peer_addr}: {err}"),
                 }
-                Err(err) => println!("failed to connect to peer {peer_addr}: {err}"),
+            }
+            drop(stream);
+
+            let mut available_pieces = BinaryHeap::new();
+            let mut unavailable_pieces = Vec::new();
+            let metadata = self.metadata.lock().await;
+            let peers = self.peers.lock().await;
+            for piece_i in metadata.pieces.unset_bits() {
+                let piece = Piece::new(piece_i, &metadata.dot_torrent, peers.as_slice());
+                if piece.peers().is_empty() {
+                    unavailable_pieces.push(piece);
+                } else {
+                    // TODO: handle unavailable pieces
+                    available_pieces.push(piece);
+                }
             }
         }
-        drop(stream);
     }
+}
 
-    async fn get_uploaders(&mut self) -> anyhow::Result<()> {
-        let metadata = &self.metadata.lock().unwrap();
-        let resp = query_tracker(&metadata.dot_torrent).await?;
-        self.interval = resp.interval;
-        self.peer_list = resp.peers;
-        Ok(())
+pub type SharedPeerAddrs = Arc<Mutex<PeerAddrs>>;
+
+pub type SharedPeers = Arc<Mutex<Vec<Peer>>>;
+
+async fn connect_to_peers(addrs: SharedPeerAddrs) {}
+
+// sends regular requests to the tracker at an interval specified by it
+async fn heartbeat(metadata: SharedMetadata, peer_addrs: SharedPeerAddrs, notify: Arc<Notify>) {
+    let mut interval = 0;
+    loop {
+        sleep(Duration::from_secs(interval)).await;
+        let mut backoff = 1;
+        loop {
+            let metadata = metadata.lock().await;
+            let resp = query_tracker(&metadata.dot_torrent).await;
+            drop(metadata);
+            if let Ok(resp) = resp {
+                interval = resp.interval;
+                let mut peer_addrs = peer_addrs.lock().await;
+                *peer_addrs = resp.peers;
+                notify.notify_one();
+                break;
+            }
+            sleep(Duration::from_secs(backoff)).await;
+            backoff *= 2;
+        }
     }
 }
