@@ -1,4 +1,4 @@
-pub mod bitfield;
+pub mod bit_vec;
 pub mod cache;
 pub mod client;
 pub mod create;

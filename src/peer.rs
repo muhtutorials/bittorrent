@@ -1,5 +1,5 @@
 use crate::BLOCK_SIZE;
-use crate::bitfield::Bitfield;
+use crate::bit_vec::BitVec;
 use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 use futures_util::{SinkExt, StreamExt};
@@ -15,7 +15,7 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 pub(crate) struct Peer {
     addr: SocketAddrV4,
     stream: Framed<TcpStream, MessageFramer>,
-    pieces: Bitfield,
+    pieces: BitVec,
     chocked: bool,
 }
 
@@ -48,7 +48,7 @@ impl Peer {
         Ok(Self {
             addr,
             stream,
-            pieces: Bitfield::from_vec(msg.payload),
+            pieces: BitVec::from_vec(msg.payload),
             chocked: true,
         })
     }

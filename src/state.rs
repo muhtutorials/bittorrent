@@ -1,4 +1,4 @@
-use crate::bitfield::Bitfield;
+use crate::bit_vec::BitVec;
 use crate::db::FileDB;
 use crate::dot_torrent::DotTorrent;
 use serde::Deserialize;
@@ -36,7 +36,7 @@ pub struct Metadata {
     pub uploaded: usize,
     pub downloaded: usize,
     pub left: usize,
-    pub pieces: Bitfield,
+    pub pieces: BitVec,
     pub finished: bool,
 }
 

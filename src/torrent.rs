@@ -1,14 +1,14 @@
-use std::collections::BinaryHeap;
 use crate::peer::Peer;
+use crate::piece::Piece;
 use crate::state::SharedMetadata;
 use crate::tracker::{PeerAddrs, query_tracker};
+use futures_util::{StreamExt, stream};
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::time::Duration;
-use futures_util::{stream, StreamExt};
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, Semaphore, mpsc, Notify};
+use tokio::sync::{Mutex, Notify, Semaphore, mpsc};
 use tokio::time::sleep;
-use crate::piece::Piece;
 
 pub struct TorrentManager {
     pub info_hash: [u8; 20],
@@ -52,7 +52,11 @@ impl Torrent {
     }
 
     pub async fn run(&mut self) {
-        tokio::spawn(heartbeat(self.metadata.clone(), self.peer_addrs.clone(), self.notify.clone()));
+        tokio::spawn(heartbeat(
+            self.metadata.clone(),
+            self.peer_addrs.clone(),
+            self.notify.clone(),
+        ));
         let info_hash = self.info_hash.clone();
         loop {
             self.notify.notified().await;
@@ -78,7 +82,7 @@ impl Torrent {
             let mut unavailable_pieces = Vec::new();
             let metadata = self.metadata.lock().await;
             let peers = self.peers.lock().await;
-            for piece_i in metadata.pieces.unset_bits() {
+            for piece_i in metadata.pieces.zeros() {
                 let piece = Piece::new(piece_i, &metadata.dot_torrent, peers.as_slice());
                 if piece.peers().is_empty() {
                     unavailable_pieces.push(piece);
