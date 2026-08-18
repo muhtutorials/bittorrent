@@ -1,14 +1,15 @@
 use crate::dot_torrent::hashes::Hashes;
-use crate::dot_torrent::{Info, Key, DotTorrent};
+use crate::dot_torrent::{DotTorrent, Info, Key};
 use anyhow::Context;
-use memmap2::Mmap;
 use sha1::{Digest, Sha1};
-use std::fs::File;
 use std::path::PathBuf;
+use tokio::fs::{File, write};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 
 const PIECE_LENGTH: usize = 32768;
 
-pub async fn create_torrent(path: PathBuf) -> anyhow::Result<()> {
+pub async fn create_torrent(path_str: &str) -> anyhow::Result<String> {
+    let path = PathBuf::from(path_str);
     let name = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -26,13 +27,13 @@ pub async fn create_torrent(path: PathBuf) -> anyhow::Result<()> {
         },
     };
     if path.is_file() {
-        let file = File::open(path).context("failed to open the file")?;
-        let mmap = unsafe { Mmap::map(&file).context("failed to map the file")? };
-        let file_length = mmap.len();
+        let mut file = File::open(path).await.context("failed to open the file")?;
+        let file_length = file.seek(SeekFrom::End(0)).await? as usize;
         dot_torrent.info.key = Key::SingleFile {
             length: file_length,
         };
         let n_pieces = (file_length + PIECE_LENGTH - 1) / PIECE_LENGTH;
+        let mut buf = [0u8; PIECE_LENGTH];
         for piece_i in 0..n_pieces {
             let piece_size = if piece_i == n_pieces - 1 {
                 // calculate last piece's size
@@ -41,7 +42,10 @@ pub async fn create_torrent(path: PathBuf) -> anyhow::Result<()> {
             } else {
                 PIECE_LENGTH
             };
-            let piece = &mmap[piece_i * PIECE_LENGTH..piece_i * PIECE_LENGTH + piece_size];
+            let piece = &mut buf[..piece_size];
+            let offset = (piece_i * PIECE_LENGTH) as u64;
+            file.seek(SeekFrom::Start(offset)).await?;
+            file.read_exact(piece).await?;
             let mut hasher = Sha1::new();
             hasher.update(piece);
             let hash: [u8; 20] = hasher.finalize().into();
@@ -52,9 +56,9 @@ pub async fn create_torrent(path: PathBuf) -> anyhow::Result<()> {
         let mut path = PathBuf::from("./");
         path.push(&dot_torrent.info.name);
         path.set_extension("torrent");
-        tokio::fs::write(path, &bencoded_dot_torrent)
+        write(path, &bencoded_dot_torrent)
             .await
             .context("failed to write `.torrent` file")?;
     }
-    Ok(())
+    Ok(format!("created torrent from path: {path_str}"))
 }

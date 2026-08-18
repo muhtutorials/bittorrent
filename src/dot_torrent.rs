@@ -4,10 +4,11 @@ use hashes::Hashes;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::path::Path;
+use tokio::fs::read;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DotTorrent {
-    // The URL of the tracker.
+    // URL of the tracker
     pub announce: String,
     pub info: Info,
 }
@@ -21,10 +22,10 @@ impl DotTorrent {
     }
 
     pub async fn read(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let dot_torrent = tokio::fs::read(path).await.context("open torrent file")?;
-        let torrent: DotTorrent =
-            serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
-        Ok(torrent)
+        let bytes = read(path).await.context("open .torrent file")?;
+        let dot_torrent: DotTorrent =
+            serde_bencode::from_bytes(&bytes).context("parse .torrent file")?;
+        Ok(dot_torrent)
     }
 
     pub fn print_tree(&self) {
@@ -92,8 +93,8 @@ pub enum Key {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct File {
-    pub length: usize,
     pub path: Vec<String>,
+    pub length: usize,
 }
 
 pub mod hashes {

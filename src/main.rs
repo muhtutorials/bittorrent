@@ -1,42 +1,16 @@
-use std::io::Write;
-use bittorrent::create::create_torrent;
-use bittorrent::dot_torrent::DotTorrent;
-use clap::{Parser, Subcommand};
-use std::path::PathBuf;
-
-#[derive(Debug, Parser)]
-pub struct Args {
-    #[command(subcommand)]
-    pub command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-#[clap(rename_all = "snake_case")]
-pub enum Command {
-    Download { path: PathBuf },
-    Create { path: PathBuf },
-    Test,
-}
+use bittorrent::Client;
+use bittorrent::ipc::{Args, handle_cmd};
+use clap::Parser;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     match args.command {
-        Command::Download { mut path } => {
-            path.set_extension("torrent");
-            let dot_torrent = DotTorrent::read(path).await?;
-            let files = dot_torrent.download_all().await?;
-            let output = dot_torrent.info.name;
-            tokio::fs::write(
-                output,
-                files.into_iter().next().expect("always one file").bytes(),
-            )
-            .await?
+        Some(cmd) => handle_cli_cmd(cmd),
+        None => {
+            let client = Client::new();
+            client.run()
         }
-        Command::Create { path } => create_torrent(path).await?,
-        Command::Test => {
-
-        },
     }
     Ok(())
 }

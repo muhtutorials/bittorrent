@@ -1,10 +1,13 @@
 use crate::dot_torrent::DotTorrent;
+use crate::state::State;
 use anyhow::{Context, anyhow};
 use hex;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
+use tokio::time::{self, Duration, Instant};
 
 // NOTE: `info_hash` field is not included.
 // Added separately to the URL parameters because
@@ -59,10 +62,10 @@ pub struct TrackerRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrackerResponse {
     // Interval in seconds that the client should wait
-    // between sending regular requests to the tracker
+    // between sending regular requests to the tracker.
     pub interval: u64,
 
-    // peers value may be a string consisting of multiples of 6 bytes.
+    // peers value should be a string consisting of multiples of 6 bytes.
     // First 4 bytes are the IP address and last 2 bytes are
     // the port number. All in network (big endian) notation.
     pub peers: PeerAddrs,
@@ -73,7 +76,7 @@ pub struct TrackerResponseErr {
     reason: String,
 }
 
-pub async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<TrackerResponse> {
+async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<TrackerResponse> {
     let info_hash = dot_torrent.info_hash()?;
     let peer_id = b"00112233445566778899";
     let request = TrackerRequest {
@@ -93,10 +96,10 @@ pub async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<TrackerRe
         &url_encode(&peer_id)
     );
     let response = reqwest::get(url).await.context("query tracker")?;
-    let status_is_success = response.status().is_success();
+    let is_success = response.status().is_success();
     let response = response.bytes().await.context("fetch tracker response")?;
     println!("{}", String::from_utf8_lossy(&response.to_vec()));
-    if status_is_success {
+    if is_success {
         let response: TrackerResponse =
             serde_bencode::from_bytes(&response).context("parse tracker response")?;
         Ok(response)
@@ -105,6 +108,69 @@ pub async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<TrackerRe
             serde_bencode::from_bytes(&response).context("parse tracker response")?;
         Err(anyhow!("{}", response.reason))
     }
+}
+
+pub(crate) async fn tracker_queries_task(state: Arc<State>) {
+    while !state.is_shutdown() {
+        if let Some(deadline) = send_queries(state.clone()).await {
+            tokio::select! {
+                _ = time::sleep_until(deadline) => {}
+                _ = state.notify.notified() => {}
+            }
+        } else {
+            state.notify.notified().await;
+        }
+    }
+    println!("tracker routine shut down")
+}
+
+// TODO: maybe refactor it later to be a method on State
+async fn send_queries(state: Arc<State>) -> Option<Instant> {
+    let (due_torrents, wait_deadline) = {
+        let mut state = state.get_state();
+        if state.shutdown {
+            return None;
+        }
+        let now = Instant::now();
+        let mut due_torrents = Vec::new();
+        let mut wait_deadline = None;
+        while let Some(&(deadline, info_hash)) = state.intervals.iter().next() {
+            if deadline > now {
+                wait_deadline = Some(deadline);
+                break;
+            }
+            if let Some(torrent) = state.torrents.get(&info_hash) {
+                let dot_torrent = torrent.metadata.dot_torrent.clone();
+                due_torrents.push((info_hash, dot_torrent));
+            }
+            state.intervals.remove(&(deadline, info_hash));
+        }
+        (due_torrents, wait_deadline)
+    };
+    for (info_hash, dot_torrent) in due_torrents {
+        match query_tracker(&dot_torrent).await {
+            Ok(resp) => {
+                let mut state = state.get_state();
+                if let Some(torrent) = state.torrents.get_mut(&info_hash) {
+                    // TODO: think of a way to notify peer of peer addresses update
+                    torrent.peer_addrs = resp.peers;
+                    state.intervals.insert((
+                        Instant::now() + Duration::from_secs(resp.interval),
+                        info_hash,
+                    ));
+                }
+            }
+            Err(err) => {
+                eprintln!("query failed for {:?}: {}", info_hash, err);
+                let mut state = state.get_state();
+                state
+                    .intervals
+                    // TODO: think about retries
+                    .insert((Instant::now() + Duration::from_secs(30), info_hash));
+            }
+        }
+    }
+    wait_deadline
 }
 
 pub fn url_encode(v: &[u8; 20]) -> String {

@@ -33,6 +33,7 @@ impl Piece {
         }
     }
 
+    // returns piece's index
     pub(crate) fn index(&self) -> usize {
         self.index
     }

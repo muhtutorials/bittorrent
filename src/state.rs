@@ -1,43 +1,41 @@
-use crate::bit_vec::BitVec;
-use crate::db::FileDB;
-use crate::dot_torrent::DotTorrent;
-use serde::Deserialize;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use crate::torrent::Torrent;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard};
+use tokio::sync::Notify;
+use tokio::time::Instant;
 
-pub struct State {
-    db: FileDB,
-    // Torrents' metadata, where key is info hash.
-    pub data: Vec<SharedMetadata>,
+pub(crate) struct State {
+    pub(crate) inner: Mutex<Inner>,
+    pub(crate) notify: Notify,
+}
+
+struct Inner {
+    pub(crate) torrents: HashMap<[u8; 20], Torrent>,
+    // Intervals that the client should wait between
+    // sending regular requests to the tracker(s).
+    pub(crate) intervals: BTreeSet<(Instant, [u8; 20])>,
+    pub(crate) shutdown: bool,
 }
 
 impl State {
-    pub fn new(db: FileDB) -> anyhow::Result<Self> {
-        let data: Vec<Metadata> = serde_json::from_slice(db.data())?;
-        let data = data
-            .into_iter()
-            .map(|value| Arc::new(Mutex::new(value)))
-            .collect();
-        Ok(Self { db, data })
+    pub(crate) fn new(torrents: HashMap<[u8; 20], Torrent>) -> Self {
+        let inner = Inner {
+            torrents,
+            intervals: BTreeSet::new(),
+            shutdown: false,
+        };
+        Self {
+            inner: Mutex::new(inner),
+            notify: Notify::new(),
+        }
     }
 
-    // pub fn save(&self) -> anyhow::Result<Self> {
-    // }
-}
+    pub(crate) fn get_state(&self) -> MutexGuard<Inner> {
+        self.inner.lock().unwrap()
+    }
 
-#[derive(Deserialize, Clone)]
-pub struct Metadata {
-    pub id: usize,
-    pub path: PathBuf,
-    pub dot_torrent: DotTorrent,
-    pub peer_id: [u8; 20],
-    pub port: u16,
-    pub uploaded: usize,
-    pub downloaded: usize,
-    pub left: usize,
-    pub pieces: BitVec,
-    pub finished: bool,
+    pub(crate) fn is_shutdown(&self) -> bool {
+        self.inner.lock().unwrap().shutdown
+    }
 }
-
-pub type SharedMetadata = Arc<Mutex<Metadata>>;

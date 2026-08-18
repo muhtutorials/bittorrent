@@ -13,41 +13,37 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 
 // so that we can respond from request from other side, also choking and unchoking other side
 pub(crate) struct Peer {
-    addr: SocketAddrV4,
-    stream: Framed<TcpStream, MessageFramer>,
+    conn: Framed<TcpStream, MessageFramer>,
     pieces: BitVec,
     chocked: bool,
 }
 
 impl Peer {
     pub async fn new(addr: SocketAddrV4, info_hash: [u8; 20]) -> anyhow::Result<Self> {
-        let mut stream = TcpStream::connect(addr).await.context("connect to peer")?;
+        let mut conn = TcpStream::connect(addr).await.context("connect to peer")?;
         let mut handshake = Handshake::new(info_hash, *b"00112233445566778899");
         // TODO: remove unsafe and implement serde instead
         // drop handshake_bytes
         // Safety: Handshake is POD with repr(C)
         let handshake_bytes = handshake.as_bytes_mut();
-        stream
-            .write_all(handshake_bytes)
+        conn.write_all(handshake_bytes)
             .await
             .context("write handshake")?;
-        stream
-            .read_exact(handshake_bytes)
+        conn.read_exact(handshake_bytes)
             .await
             .context("read handshake")?;
         let handshake = Handshake::ref_from_bytes(handshake_bytes);
         anyhow::ensure!(handshake.length == 19);
         anyhow::ensure!(handshake.bittorrent == *b"BitTorrent protocol");
-        let mut stream = Framed::new(stream, MessageFramer);
-        let msg = stream
+        let mut conn = Framed::new(conn, MessageFramer);
+        let msg = conn
             .next()
             .await
             .expect("peer always sends a bitfield")
             .context("peer message was invalid")?;
         anyhow::ensure!(msg.typ == MessageType::Bitfield);
         Ok(Self {
-            addr,
-            stream,
+            conn,
             pieces: BitVec::from_vec(msg.payload),
             chocked: true,
         })
@@ -67,19 +63,18 @@ impl Peer {
         done_tx: Sender<Message>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(self.has_piece(piece_i));
-        self.stream
+        self.conn
             .send(Message {
                 typ: MessageType::Interested,
                 payload: Vec::new(),
             })
             .await
             .context("send interested message")?;
-
         // TODO: timeout, error and return block to submit if next() timed out
         'job: loop {
             while self.chocked {
                 let msg = self
-                    .stream
+                    .conn
                     .next()
                     .await
                     .expect("peer always sends an unchoke")
@@ -111,11 +106,9 @@ impl Peer {
                     }
                 }
             }
-
             let Ok(block_i) = job_rx.recv().await else {
                 break;
             };
-
             let block_size = if block_i == n_blocks - 1 {
                 // calculate last block's size
                 let modulo = piece_size % BLOCK_SIZE;
@@ -129,7 +122,7 @@ impl Peer {
                 block_size as u32,
             );
             let request_bytes = Vec::from(request.as_bytes_mut());
-            self.stream
+            self.conn
                 .send(Message {
                     typ: MessageType::Request,
                     payload: request_bytes,
@@ -140,7 +133,7 @@ impl Peer {
             let mut msg;
             loop {
                 msg = self
-                    .stream
+                    .conn
                     .next()
                     .await
                     .expect("peer always sends an unchoke")
@@ -275,14 +268,17 @@ pub struct PieceResponse<T: ?Sized = [u8]> {
 }
 
 impl PieceResponse {
+    // returns piece index
     pub fn index(&self) -> u32 {
         u32::from_be_bytes(self.index)
     }
 
+    // returns byte offset within the piece
     pub fn begin(&self) -> u32 {
         u32::from_be_bytes(self.begin)
     }
 
+    // returns block data
     pub fn block(&self) -> &[u8] {
         &self.block
     }
@@ -349,7 +345,7 @@ impl TryFrom<u8> for MessageType {
     }
 }
 
-// Message form: <length prefix><message ID><payload>.
+// Message form: <length (4 bytes)><type (1 byte)><payload>.
 pub struct MessageFramer;
 
 const MAX: usize = 1 << 16;
@@ -363,24 +359,20 @@ impl Decoder for MessageFramer {
             // Not enough data to read message length.
             return Ok(None);
         }
-
         // Read message length.
         let mut length_bytes = [0u8; 4];
         length_bytes.copy_from_slice(&src[..4]);
         let length = u32::from_be_bytes(length_bytes) as usize;
-
         if length == 0 {
             // This is a keep-alive message which should be discarded.
             src.advance(4);
             // Try again in case buffer has more messages.
             return self.decode(src);
         }
-
         if src.len() < 5 {
             // Not enough data to read message type.
             return Ok(None);
         }
-
         // Check that the length is not too large to avoid a DOS
         // attack where the server runs out of memory.
         if length > MAX {
@@ -389,19 +381,16 @@ impl Decoder for MessageFramer {
                 format!("frame of length {} is too large", length),
             ));
         }
-
         if src.len() < 4 + length {
             // The full string has not yet arrived.
             //
             // We reserve more space in the buffer. This is not strictly
             // necessary, but is a good idea performance-wise.
             src.reserve(4 + length - src.len());
-
             // We inform the `Framed` that we need more bytes to form the next
             // frame.
             return Ok(None);
         }
-
         // Use advance to modify `src` such that it no longer contains
         // this frame.
         let typ = src[4].try_into()?;
@@ -412,7 +401,6 @@ impl Decoder for MessageFramer {
             Vec::new()
         };
         src.advance(4 + length);
-
         Ok(Some(Message { typ, payload }))
     }
 }
@@ -430,15 +418,12 @@ impl Encoder<Message> for MessageFramer {
                 format!("frame of length {} is too large", item.payload.len() + 1),
             ));
         }
-
         // Convert the length into a byte array.
-        let length_slice = u32::to_be_bytes(item.payload.len() as u32 + 1);
-
+        let length_bytes = u32::to_be_bytes(item.payload.len() as u32 + 1);
         // Reserve space in the buffer.
         dst.reserve(4 + 1 + item.payload.len());
-
         // Write the length, tag and string to the buffer.
-        dst.extend_from_slice(&length_slice);
+        dst.extend_from_slice(&length_bytes);
         dst.put_u8(item.typ as u8);
         dst.extend_from_slice(&item.payload);
         Ok(())

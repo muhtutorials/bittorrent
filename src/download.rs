@@ -2,7 +2,6 @@ use crate::BLOCK_SIZE;
 use crate::dot_torrent::{DotTorrent, File, Key};
 use crate::peer::{MessageType, Peer, PieceResponse};
 use crate::piece::Piece;
-use crate::tracker::query_tracker;
 use anyhow::Context;
 use futures_util::StreamExt;
 use futures_util::stream;
@@ -23,7 +22,6 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
             (peer_addr, peer)
         })
         .buffer_unordered(5);
-
     let mut peers = Vec::new();
     while let Some((peer_addr, peer)) = stream.next().await {
         match peer {
@@ -37,7 +35,6 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
         }
     }
     drop(stream);
-
     // TODO: since it's stored in memory, should be implemented differently
     // write every piece to disk so we can resume downloads and seed later on
     let mut pieces_to_download = BinaryHeap::new();
@@ -52,17 +49,16 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
         }
     }
     assert!(unavailable_pieces.is_empty());
-
     let mut downloaded_pieces = vec![0; dot_torrent.length()];
     while let Some(piece) = pieces_to_download.pop() {
+        // TODO: why doesn't piece store references to peers instead of indices?
         let peers: Vec<_> = peers
             .iter_mut()
             .enumerate()
             .filter_map(|(peer_i, peer)| piece.peers().contains(&peer_i).then_some(peer))
             .collect();
-
         let piece_size = piece.length();
-        // "+ BLOCK_SIZE - 1" rounds up the number
+        // `+ BLOCK_SIZE - 1` rounds up the number
         let n_blocks = (piece_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let (job_tx, job_rx) = bounded_async(n_blocks);
         for block_i in 0..n_blocks {
@@ -71,7 +67,6 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
                 .await
                 .expect("all peers already exited");
         }
-
         let (done_tx, mut done_rx) = channel(n_blocks);
         let mut participants = FuturesUnordered::new();
         for peer in peers {
@@ -86,9 +81,8 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
         }
         // drop our copies of handles
         drop(job_tx);
-        drop(done_tx);
         drop(job_rx);
-
+        drop(done_tx);
         let mut downloaded_blocks = vec![0u8; piece_size];
         let mut bytes_received = 0;
         loop {
@@ -118,11 +112,12 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
                         assert_eq!(msg.typ, MessageType::Piece);
                         assert!(!msg.payload.is_empty());
                         // keep track of the bytes in message
-                        let piece_response = PieceResponse::ref_from_bytes(&msg.payload)
+                        let piece_resp = PieceResponse::ref_from_bytes(&msg.payload)
                             .expect("always get all `PieceResponse` fields from peer");
-                        downloaded_blocks[piece_response.begin() as usize..][..piece_response.block().len()]
-                            .copy_from_slice(piece_response.block());
-                        bytes_received += piece_response.block().len();
+                        // `[value1..][..value2]` slices vec from value1 to value2
+                        downloaded_blocks[piece_resp.begin() as usize..][..piece_resp.block().len()]
+                            .copy_from_slice(piece_resp.block());
+                        bytes_received += piece_resp.block().len();
                         if bytes_received == piece_size {
                             // we got all the bytes
                             // This must mean that all participants have either exited or
@@ -139,7 +134,6 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
             }
         }
         drop(participants);
-
         if bytes_received == piece_size {
             // we got all the bytes
         } else {
@@ -148,17 +142,14 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
             // Probably also stick this back onto the pieces_heap.
             anyhow::bail!("no peers left to get piece {}", piece.index());
         }
-
         assert_eq!(downloaded_blocks.len(), piece_size);
         let mut hasher = Sha1::new();
         hasher.update(&downloaded_blocks);
         let hash: [u8; 20] = hasher.finalize().into();
         assert_eq!(hash, piece.hash());
-
         downloaded_pieces[piece.index() * dot_torrent.info.piece_length..][..piece_size]
             .copy_from_slice(&downloaded_blocks)
     }
-
     let files = match &dot_torrent.info.key {
         Key::SingleFile { length } => vec![File {
             length: *length,
@@ -166,10 +157,9 @@ pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> 
         }],
         Key::MultipleFiles { files } => files.clone(),
     };
-
     Ok(Downloaded {
-        bytes: downloaded_pieces,
         files,
+        bytes: downloaded_pieces,
     })
 }
 

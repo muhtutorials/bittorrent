@@ -1,7 +1,7 @@
 use anyhow::Context;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use serde::Deserialize;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 
@@ -20,37 +20,36 @@ pub struct FileDB {
 }
 
 impl FileDB {
+    // Open DB where `path` is path to DB containing file.
     pub async fn open(path: PathBuf) -> anyhow::Result<Self> {
         let config_path = path
-            .as_path()
             .file_name()
             .and_then(|file_name| file_name.to_str())
             .map(|file_name| {
-                let new_file_name = String::from("config_") + file_name;
                 let mut config_path = path.clone();
-                config_path.set_file_name(new_file_name);
+                config_path.set_file_name(format!("config_{}", file_name));
                 config_path
             })
-            .ok_or(anyhow::anyhow!("could not create config file path"))?;
-
+            .context("could not create config file path")?;
         let mut config_file = OpenOptions::new()
             .create(true)
             .read(true)
             .open(&config_path)
             .await
             .context(format!("couldn't open `{}`", config_path.display()))?;
-
         let mut buf = Vec::new();
         config_file.read(&mut buf).await?;
         let mut config;
         let mut checksum_unset = false;
         if buf.len() == 0 {
-            config = Config { id: 0, checksum: [0; 32]};
+            config = Config {
+                id: 0,
+                checksum: [0; 32],
+            };
             checksum_unset = true;
         } else {
             config = serde_json::from_slice(&buf)?;
         }
-
         let mut file = OpenOptions::new()
             .create(true)
             .read(true)
