@@ -1,18 +1,18 @@
 use anyhow::Context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 
-#[derive(Deserialize, Clone)]
-struct Config {
+#[derive(Deserialize, Serialize, Clone)]
+pub(crate) struct Config {
     id: usize,
     checksum: [u8; 32],
 }
 
 #[derive(Clone)]
-pub struct FileDB {
+pub(crate) struct FileDB {
     config_path: PathBuf,
     config: Config,
     path: PathBuf,
@@ -21,7 +21,7 @@ pub struct FileDB {
 
 impl FileDB {
     // Open DB where `path` is path to DB containing file.
-    pub async fn open(path: PathBuf) -> anyhow::Result<Self> {
+    pub(crate) async fn open(path: PathBuf) -> anyhow::Result<Self> {
         let config_path = path
             .file_name()
             .and_then(|file_name| file_name.to_str())
@@ -72,7 +72,7 @@ impl FileDB {
         })
     }
 
-    pub async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
+    pub(crate) async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
         let mut hasher = Sha256::new();
         hasher.update(buf);
         hasher.update(b"\n");
@@ -81,6 +81,12 @@ impl FileDB {
             return Ok(());
         }
         self.config.checksum = checksum;
+        let config_file = File::create(&self.config_path).await?;
+        let mut config_writer = BufWriter::new(config_file);
+        let config_str = serde_json::to_string(&self.config)?;
+        config_writer.write_all(config_str.as_bytes()).await?;
+        config_writer.write_all(b"\n").await?;
+        config_writer.flush().await?;
         let file = File::create(&self.path).await?;
         let mut writer = BufWriter::new(file);
         writer.write_all(buf).await?;
@@ -91,12 +97,11 @@ impl FileDB {
         Ok(())
     }
 
-    pub fn data(&self) -> &[u8] {
-        &self.data
+    pub(crate) fn id(&self) -> usize {
+        self.config.id
     }
 
-    pub fn generate_id(&mut self) -> usize {
-        self.config.id += 1;
-        self.config.id
+    pub(crate) fn data(&self) -> &[u8] {
+        &self.data
     }
 }

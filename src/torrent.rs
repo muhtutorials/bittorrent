@@ -1,5 +1,5 @@
 use crate::bit_vec::BitVec;
-use crate::dot_torrent::DotTorrent;
+use crate::dot_torrent::{self, DotTorrent};
 use crate::peer::Peer;
 use crate::piece::Piece;
 use crate::tracker::PeerAddrs;
@@ -13,15 +13,20 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::time::sleep;
 
-pub struct Torrent {
-    pub metadata: Metadata,
+pub(crate) struct Torrent {
+    pub(crate) metadata: Metadata,
     // addresses of available peers sent by tracker
-    pub peer_addrs: PeerAddrs,
-    pub peers: HashMap<SocketAddrV4, Peer>,
+    pub(crate) peer_addrs: PeerAddrs,
+    pub(crate) peers: HashMap<SocketAddrV4, Peer>,
 }
 
 impl Torrent {
-    pub fn new(metadata: Metadata) -> Self {
+    pub(crate) fn new(id: usize, path: PathBuf, dot_torrent: DotTorrent) -> anyhow::Result<Self> {
+        let metadata = Metadata::new(id, path, dot_torrent)?;
+        Ok(Self::from_metadata(metadata))
+    }
+
+    pub(crate) fn from_metadata(metadata: Metadata) -> Self {
         Self {
             metadata,
             peer_addrs: PeerAddrs(Vec::new()),
@@ -74,18 +79,39 @@ impl Torrent {
 
 // Torrent's metadata.
 #[derive(Deserialize, Clone)]
-pub struct Metadata {
-    pub id: usize,
-    pub path: PathBuf,
-    pub dot_torrent: DotTorrent,
-    pub info_hash: [u8; 20],
-    pub peer_id: [u8; 20],
-    pub port: u16,
-    pub pieces: BitVec,
-    pub uploaded: usize,
-    pub downloaded: usize,
-    pub left: usize,
-    pub finished: bool,
+pub(crate) struct Metadata {
+    pub(crate) id: usize,
+    pub(crate) path: PathBuf,
+    pub(crate) dot_torrent: DotTorrent,
+    pub(crate) info_hash: [u8; 20],
+    pub(crate) pieces: BitVec,
+    pub(crate) uploaded: usize,
+    pub(crate) downloaded: usize,
+    pub(crate) left: usize,
+    pub(crate) finished: bool,
+    pub(crate) file_exists: bool,
+}
+
+impl Metadata {
+    pub(crate) fn new(id: usize, path: PathBuf, dot_torrent: DotTorrent) -> anyhow::Result<Self> {
+        let info_hash = dot_torrent.info_hash()?;
+        let n_pieces = dot_torrent.info.pieces.0.len();
+        let pieces = BitVec::new(n_pieces);
+        let left = dot_torrent.length();
+        Ok(Self {
+            id,
+            path,
+            dot_torrent,
+            info_hash,
+            pieces,
+            uploaded: 0,
+            downloaded: 0,
+            left,
+            finished: false,
+            // TODO: change it to true when file is created.
+            file_exists: false,
+        })
+    }
 }
 
 // sends regular requests to the tracker at an interval specified by it

@@ -1,34 +1,42 @@
-use crate::download::{Downloaded, all};
 use anyhow::Context;
 use hashes::Hashes;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use std::path::Path;
-use tokio::fs::read;
+use std::path::{Path, PathBuf};
+use tokio::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DotTorrent {
+pub(crate) struct DotTorrent {
     // URL of the tracker
     pub announce: String,
     pub info: Info,
 }
 
 impl DotTorrent {
-    pub fn info_hash(&self) -> anyhow::Result<[u8; 20]> {
+    pub(crate) fn info_hash(&self) -> anyhow::Result<[u8; 20]> {
         let bencoded_info = serde_bencode::to_bytes(&self.info).context("bencode info section")?;
         let mut hasher = Sha1::new();
         hasher.update(&bencoded_info);
         Ok(hasher.finalize().into())
     }
 
-    pub async fn read(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let bytes = read(path).await.context("open .torrent file")?;
+    pub(crate) async fn read(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let mut path = PathBuf::from(path.as_ref());
+        path.set_extension("torrent");
+        let bytes = fs::read(path).await.context("open .torrent file")?;
         let dot_torrent: DotTorrent =
             serde_bencode::from_bytes(&bytes).context("parse .torrent file")?;
         Ok(dot_torrent)
     }
 
-    pub fn print_tree(&self) {
+    pub(crate) fn length(&self) -> usize {
+        match &self.info.key {
+            Key::SingleFile { length } => *length,
+            Key::MultipleFiles { files } => files.iter().map(|file| file.length).sum(),
+        }
+    }
+
+    pub(crate) fn print_tree(&self) {
         println!("torrent tree:");
         match &self.info.key {
             Key::SingleFile { .. } => {
@@ -40,17 +48,6 @@ impl DotTorrent {
                 }
             }
         }
-    }
-
-    pub fn length(&self) -> usize {
-        match &self.info.key {
-            Key::SingleFile { length } => *length,
-            Key::MultipleFiles { files } => files.iter().map(|file| file.length).sum(),
-        }
-    }
-
-    pub async fn download_all(&self) -> anyhow::Result<Downloaded> {
-        all(self).await
     }
 }
 

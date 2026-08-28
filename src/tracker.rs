@@ -1,13 +1,17 @@
-use crate::dot_torrent::DotTorrent;
-use crate::state::State;
+use crate::DotTorrent;
+use crate::State;
 use anyhow::{Context, anyhow};
 use hex;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddrV4};
-use std::sync::Arc;
 use tokio::time::{self, Duration, Instant};
+
+// Azureus-style peer ID:
+//  '-', two characters for client id, four ascii digits for version
+//  number, '-', followed by random numbers (URL-safe characters).
+const PEER_ID: &[u8; 20] = b"-IG0001-wowwowwowwow";
 
 // NOTE: `info_hash` field is not included.
 // Added separately to the URL parameters because
@@ -76,9 +80,8 @@ pub struct TrackerResponseErr {
     reason: String,
 }
 
-async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<TrackerResponse> {
+pub(crate) async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<TrackerResponse> {
     let info_hash = dot_torrent.info_hash()?;
-    let peer_id = b"00112233445566778899";
     let request = TrackerRequest {
         port: 6881,
         uploaded: 0,
@@ -93,7 +96,7 @@ async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<TrackerRespon
         dot_torrent.announce,
         url_params,
         &url_encode(&info_hash),
-        &url_encode(&peer_id)
+        &url_encode(PEER_ID)
     );
     let response = reqwest::get(url).await.context("query tracker")?;
     let is_success = response.status().is_success();
@@ -110,24 +113,24 @@ async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<TrackerRespon
     }
 }
 
-pub(crate) async fn tracker_queries_task(state: Arc<State>) {
-    while !state.is_shutdown() {
+pub(crate) async fn tracker_queries_task(state: State) {
+    while !state.is_shutdown().await {
         if let Some(deadline) = send_queries(state.clone()).await {
             tokio::select! {
                 _ = time::sleep_until(deadline) => {}
-                _ = state.notify.notified() => {}
+                _ = state.notified() => {}
             }
         } else {
-            state.notify.notified().await;
+            state.notified().await;
         }
     }
     println!("tracker routine shut down")
 }
 
 // TODO: maybe refactor it later to be a method on State
-async fn send_queries(state: Arc<State>) -> Option<Instant> {
+async fn send_queries(state: State) -> Option<Instant> {
     let (due_torrents, wait_deadline) = {
-        let mut state = state.get_state();
+        let mut state = state.get().await;
         if state.shutdown {
             return None;
         }
@@ -150,7 +153,7 @@ async fn send_queries(state: Arc<State>) -> Option<Instant> {
     for (info_hash, dot_torrent) in due_torrents {
         match query_tracker(&dot_torrent).await {
             Ok(resp) => {
-                let mut state = state.get_state();
+                let mut state = state.get().await;
                 if let Some(torrent) = state.torrents.get_mut(&info_hash) {
                     // TODO: think of a way to notify peer of peer addresses update
                     torrent.peer_addrs = resp.peers;
@@ -162,7 +165,7 @@ async fn send_queries(state: Arc<State>) -> Option<Instant> {
             }
             Err(err) => {
                 eprintln!("query failed for {:?}: {}", info_hash, err);
-                let mut state = state.get_state();
+                let mut state = state.get().await;
                 state
                     .intervals
                     // TODO: think about retries

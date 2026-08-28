@@ -1,24 +1,57 @@
 use crate::BLOCK_SIZE;
+use crate::State;
 use crate::dot_torrent::{DotTorrent, File, Key};
 use crate::peer::{MessageType, Peer, PieceResponse};
 use crate::piece::Piece;
-use anyhow::Context;
+use crate::torrent::Torrent;
+use crate::tracker::query_tracker;
+use anyhow::{Context, bail};
 use futures_util::StreamExt;
 use futures_util::stream;
 use futures_util::stream::futures_unordered::FuturesUnordered;
 use kanal::bounded_async;
 use sha1::{Digest, Sha1};
 use std::collections::BinaryHeap;
+use std::path::PathBuf;
 use tokio::sync::mpsc::channel;
 
-pub(crate) async fn all(dot_torrent: &DotTorrent) -> anyhow::Result<Downloaded> {
-    let tracker_resp = query_tracker(dot_torrent)
+// TODO: combine with `download` into a single function
+pub(crate) async fn download_torrent(path_str: &str, state: State) -> anyhow::Result<String> {
+    let mut path = PathBuf::from(path_str);
+    path.set_extension("torrent");
+    let dot_torrent = DotTorrent::read(path).await?;
+    let info_hash = dot_torrent.info_hash()?;
+    let guard = state.get().await;
+    if guard.torrents.get(&info_hash).is_some() {
+        bail!("torrent already exists");
+    }
+    drop(guard); // TODO: remove later when functions are combined.
+    let files = download(&dot_torrent, state).await?;
+    let output = dot_torrent.info.name;
+    tokio::fs::write(
+        output,
+        files.into_iter().next().expect("always one file").bytes(),
+    )
+    .await
+    .context("failed to write `.torrent` file");
+    Ok(format!("downloaded torrent from path: {path_str}"))
+}
+
+async fn download(dot_torrent: &DotTorrent, state: State) -> anyhow::Result<Downloaded> {
+    let info_hash = dot_torrent.info_hash()?;
+    let mut state = state.get().await;
+    if state.torrents.get(&info_hash).is_some() {
+        bail!("torrent already exists");
+    }
+    let tracker_resp = query_tracker(&dot_torrent)
         .await
         .context("query tracker for peer info")?;
-    let info_hash = dot_torrent.info_hash()?;
-    let mut stream = stream::iter(tracker_resp.peers.0.iter())
+    let path = PathBuf::from(format!("./{}", dot_torrent.info.name));
+    let torrent = Torrent::new(state.generate_id(), path, dot_torrent.clone())?;
+    state.torrents.insert(info_hash, torrent);
+    let mut stream = stream::iter(tracker_resp.peers.0.iter().copied())
         .map(|peer_addr| async move {
-            let peer = Peer::new(*peer_addr, info_hash).await;
+            let peer = Peer::new(peer_addr, info_hash).await;
             (peer_addr, peer)
         })
         .buffer_unordered(5);

@@ -8,6 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 
 const PIECE_LENGTH: usize = 32768;
 
+// creates a new `.torrent` file
 pub async fn create_torrent(path_str: &str) -> anyhow::Result<String> {
     let path = PathBuf::from(path_str);
     let name = path

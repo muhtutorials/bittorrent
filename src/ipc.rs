@@ -1,4 +1,5 @@
 use {
+    crate::State,
     crate::cmd::{create_torrent, download_torrent},
     anyhow::bail,
     clap::{Parser, Subcommand},
@@ -26,7 +27,8 @@ pub enum Command {
     Test,
 }
 
-pub(crate) async fn ipc_server() -> anyhow::Result<()> {
+// TODO: consider moving it to a separate folder with commands
+pub(crate) async fn ipc_server(state: State) -> anyhow::Result<()> {
     let name = SOCKET_NAME.to_ns_name::<GenericNamespaced>()?;
     let listener = match ListenerOptions::new().name(name).create_tokio() {
         Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
@@ -60,6 +62,7 @@ pub(crate) async fn ipc_server() -> anyhow::Result<()> {
                 continue;
             }
         };
+        let state_clone = state.clone();
         // Spawn new parallel asynchronous tasks onto the Tokio runtime and
         // hand the connection over to them so that multiple clients could be
         // processed simultaneously in a lightweight fashion.
@@ -67,19 +70,20 @@ pub(crate) async fn ipc_server() -> anyhow::Result<()> {
             // The outer match processes errors that happen when we're
             // connecting to something. The inner if-let processes errors
             // that happen during the connection.
-            if let Err(e) = handle_conn(conn).await {
+            if let Err(e) = handle_conn(conn, state_clone).await {
                 eprintln!("Error while handling connection: {e}");
             }
         });
     }
 }
 
-async fn handle_conn(conn: Stream) -> io::Result<()> {
+// TODO: maybe refactor later into a loop
+async fn handle_conn(conn: Stream, state: State) -> io::Result<()> {
     let mut receiver = BufReader::new(&conn);
     let mut sender = &conn;
     let mut cmd = String::with_capacity(128);
     receiver.read_line(&mut cmd).await?;
-    let resp = match handle_ipc_cmd(&cmd).await {
+    let resp = match handle_ipc_cmd(&cmd, state).await {
         Ok(msg) => format!("{}\n", msg),
         Err(e) => format!("Error: {}\n", e),
     };
@@ -91,7 +95,7 @@ async fn handle_conn(conn: Stream) -> io::Result<()> {
     Ok(())
 }
 
-async fn handle_ipc_cmd(cmd: &str) -> anyhow::Result<String> {
+async fn handle_ipc_cmd(cmd: &str, state: State) -> anyhow::Result<String> {
     let args: Vec<&str> = cmd.split(" ").collect();
     if args.is_empty() {
         bail!("no command was provided");
@@ -107,7 +111,7 @@ async fn handle_ipc_cmd(cmd: &str) -> anyhow::Result<String> {
             if args.len() < 2 {
                 bail!("path argument wasn't provided");
             }
-            download_torrent(args[1]).await
+            download_torrent(args[1], state).await
         }
         "test" => Ok(String::from("test")),
         unknown => bail!("unknown command: {unknown}"),
