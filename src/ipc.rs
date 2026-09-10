@@ -118,7 +118,7 @@ async fn handle_ipc_cmd(cmd: &str, state: State) -> anyhow::Result<String> {
     }
 }
 
-pub(crate) async fn handle_cli_cmd(cmd: Command) -> anyhow::Result<()> {
+pub async fn handle_cli_cmd(cmd: Command) -> anyhow::Result<()> {
     let name = if GenericNamespaced::is_supported() {
         format!("{}.sock", SOCKET_NAME).to_ns_name::<GenericNamespaced>()?
     } else {

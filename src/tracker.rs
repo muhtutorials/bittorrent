@@ -143,7 +143,7 @@ async fn send_queries(state: State) -> Option<Instant> {
                 break;
             }
             if let Some(torrent) = state.torrents.get(&info_hash) {
-                let dot_torrent = torrent.metadata.dot_torrent.clone();
+                let dot_torrent = torrent.dot_torrent.clone();
                 due_torrents.push((info_hash, dot_torrent));
             }
             state.intervals.remove(&(deadline, info_hash));
@@ -155,8 +155,8 @@ async fn send_queries(state: State) -> Option<Instant> {
             Ok(resp) => {
                 let mut state = state.get().await;
                 if let Some(torrent) = state.torrents.get_mut(&info_hash) {
-                    // TODO: think of a way to notify peer of peer addresses update
-                    torrent.peer_addrs = resp.peers;
+                    // TODO: send updated list of peers to appropriate downloader
+                    // torrent.peer_addrs = resp.peers;
                     state.intervals.insert((
                         Instant::now() + Duration::from_secs(resp.interval),
                         info_hash,
