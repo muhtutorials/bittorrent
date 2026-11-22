@@ -1,11 +1,14 @@
-use crate::db::FileDB;
 use crate::ipc::ipc_server;
-use crate::state::{State, Torrent};
+use crate::state::State;
+use crate::torrent::Metadata;
 use crate::tracker::tracker_queries_task;
+use crate::{Torrent, db::FileDB};
 use std::collections::HashMap;
 use std::io;
+use std::net::SocketAddr;
 use std::path::PathBuf;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::channel;
 
 pub struct Client {
     db: FileDB,
@@ -17,10 +20,13 @@ impl Client {
     pub async fn new() -> anyhow::Result<Self> {
         let db = FileDB::open(PathBuf::from("db.json")).await?;
         let id = db.id();
-        let torrent_list: Vec<Torrent> = serde_json::from_slice(db.data())?;
-        let mut torrents = HashMap::with_capacity(torrent_list.len());
-        for torrent in torrent_list {
-            torrents.insert(torrent.info_hash, torrent);
+        let meta_list: Vec<Metadata> = serde_json::from_slice(db.data())?;
+        let mut torrents = HashMap::with_capacity(meta_list.len());
+        for meta in meta_list {
+            // TODO: not sure about the size
+            let (tx, rx) = channel(1024);
+            let torrent = Torrent::new(meta, rx);
+            torrents.insert(meta.info_hash, torrent);
         }
         let state = State::new(id, torrents);
         let listener = connect_to_available_port(6881, 9).await?;
@@ -31,21 +37,25 @@ impl Client {
         })
     }
 
-    pub fn run(&self) {
+    pub async fn run(&self) {
         tokio::spawn(tracker_queries_task(self.state.clone()));
         tokio::spawn(ipc_server(self.state.clone()));
         loop {
-            // let (stream, _) = self.listener.accept().await?;
-            // handle_stream(stream).await;
+            let Ok((conn, addr)) = self.listener.accept().await else {
+                continue;
+            };
+            self.handle_conn(conn, addr).await;
         }
     }
+
+    async fn handle_conn(&self, conn: TcpStream, addr: SocketAddr) {}
 
     async fn download_torrents(&self) {
         let torrents = &self.state.get().await.torrents;
         for torrent in torrents.values() {
-            if !torrent.finished {
-                tokio::spawn(async move {})
-            }
+            // if !torrent.finished {
+            //     tokio::spawn(async move {})
+            // }
         }
     }
 }

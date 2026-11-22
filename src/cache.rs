@@ -3,10 +3,27 @@ use core::time::Duration;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::spawn;
-use tokio::task::JoinHandle;
 use tokio::time;
 
 const BLOCK_POOL_SIZE: u32 = 1 << 28; // 256MB
+
+struct Cache {
+    new_pieces: HashMap<PieceKey, Piece>,
+}
+
+impl Cache {
+    pub fn new() -> Self {
+        spawn(async move {
+            let mut interval = time::interval(Duration::from_millis(50));
+            loop {
+                interval.tick().await;
+            }
+        });
+        Self {
+            new_pieces: HashMap::new(),
+        }
+    }
+}
 
 struct PieceKey {
     // path to the file containing the piece
@@ -74,22 +91,37 @@ impl Piece {
     }
 }
 
-struct Cache {
-    new_pieces: HashMap<PieceKey, Piece>,
-    assembler: JoinHandle<()>,
-}
+// use crossbeam::queue::ArrayQueue;
+// use std::sync::Arc;
 
-impl Cache {
-    pub fn new() -> Self {
-        let assembler = spawn(async move {
-            let mut interval = time::interval(Duration::from_millis(50));
-            loop {
-                interval.tick().await;
-            }
-        });
-        Self {
-            new_pieces: HashMap::new(),
-            assembler,
-        }
-    }
-}
+// pub struct BufferPool {
+//     queue: ArrayQueue<Vec<u8>>,
+//     block_len: usize,
+// }
+
+// impl BufferPool {
+//     pub fn new(capacity: usize, block_len: usize) -> Arc<Self> {
+//         let queue = ArrayQueue::new(capacity);
+//         for _ in 0..capacity {
+//             // Pre-fill so `get` never fails under normal load.
+//             let _ = queue.push(vec![0u8; block_len]);
+//         }
+//         Arc::new(Self { queue, block_len })
+//     }
+
+//     /// Take a buffer. Allocates if the pool is empty (and logs/grows).
+//     pub fn get(&self) -> Vec<u8> {
+//         self.queue.pop().unwrap_or_else(|| {
+//             // Pool exhausted — either block, grow, or allocate.
+//             vec![0u8; self.block_len]
+//         })
+//     }
+
+//     /// Return a buffer. Dropped if the pool is full.
+//     pub fn put(&self, mut buf: Vec<u8>) {
+//         if buf.len() != self.block_len {
+//             buf.resize(self.block_len, 0);
+//         }
+//         let _ = self.queue.push(buf); // ignore if full
+//     }
+// }

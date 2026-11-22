@@ -1,12 +1,13 @@
-use crate::BitVec;
 use crate::DotTorrent;
+use crate::Message;
+use crate::Torrent;
 use anyhow::bail;
-use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::futures::Notified;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, MutexGuard, Notify};
 use tokio::time::Instant;
 
@@ -23,7 +24,7 @@ pub(crate) struct Shared {
 pub(crate) struct Inner {
     // ID of the last added torrent
     id: usize,
-    pub(crate) torrents: HashMap<[u8; 20], Torrent>,
+    pub(crate) torrents: HashMap<[u8; 20], Sender<Message>>,
     // Intervals that the client should wait between
     // sending regular requests to the tracker(s).
     pub(crate) intervals: BTreeSet<(Instant, [u8; 20])>,
@@ -31,7 +32,7 @@ pub(crate) struct Inner {
 }
 
 impl State {
-    pub(crate) fn new(id: usize, torrents: HashMap<[u8; 20], Torrent>) -> Self {
+    pub(crate) fn new(id: usize, torrents: HashMap<[u8; 20], Sender<Message>>) -> Self {
         let inner = Inner {
             id,
             torrents,
@@ -78,39 +79,5 @@ impl Inner {
     pub(crate) fn generate_id(&mut self) -> usize {
         self.id += 1;
         self.id
-    }
-}
-
-#[derive(Deserialize, Clone)]
-pub(crate) struct Torrent {
-    pub(crate) id: usize,
-    pub(crate) path: PathBuf,
-    pub(crate) dot_torrent: DotTorrent,
-    pub(crate) pieces: BitVec,
-    pub(crate) uploaded: usize,
-    pub(crate) downloaded: usize,
-    pub(crate) left: usize,
-    pub(crate) finished: bool,
-    pub(crate) file_exists: bool,
-}
-
-impl Torrent {
-    pub(crate) fn new(id: usize, path: PathBuf, dot_torrent: DotTorrent) -> anyhow::Result<Self> {
-        let info_hash = dot_torrent.info_hash()?;
-        let n_pieces = dot_torrent.info.pieces.0.len();
-        let pieces = BitVec::new(n_pieces);
-        let left = dot_torrent.length();
-        Ok(Self {
-            id,
-            path,
-            dot_torrent,
-            pieces,
-            uploaded: 0,
-            downloaded: 0,
-            left,
-            finished: false,
-            // TODO: change it to true when file is created.
-            file_exists: false,
-        })
     }
 }

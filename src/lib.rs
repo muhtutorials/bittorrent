@@ -1,6 +1,8 @@
 pub mod bit_vec;
 pub(crate) use bit_vec::BitVec;
 
+pub mod scheduler;
+
 pub mod cache;
 
 pub mod client;
@@ -12,7 +14,8 @@ pub mod db;
 pub mod dot_torrent;
 pub(crate) use dot_torrent::DotTorrent;
 
-pub mod downloader;
+pub mod torrent;
+pub(crate) use torrent::Torrent;
 
 pub mod ipc;
 pub mod lru_cache;

@@ -113,6 +113,7 @@ pub(crate) async fn query_tracker(dot_torrent: &DotTorrent) -> anyhow::Result<Tr
     }
 }
 
+// TODO: maybe replace mutex with channel
 pub(crate) async fn tracker_queries_task(state: State) {
     while !state.is_shutdown().await {
         if let Some(deadline) = send_queries(state.clone()).await {
@@ -152,15 +153,13 @@ async fn send_queries(state: State) -> Option<Instant> {
     };
     for (info_hash, dot_torrent) in due_torrents {
         match query_tracker(&dot_torrent).await {
-            Ok(resp) => {
+            Ok(TrackerResponse { interval, peers }) => {
                 let mut state = state.get().await;
                 if let Some(torrent) = state.torrents.get_mut(&info_hash) {
-                    // TODO: send updated list of peers to appropriate downloader
-                    // torrent.peer_addrs = resp.peers;
-                    state.intervals.insert((
-                        Instant::now() + Duration::from_secs(resp.interval),
-                        info_hash,
-                    ));
+                    state
+                        .intervals
+                        .insert((Instant::now() + Duration::from_secs(interval), info_hash));
+                    torrent.send(peers);
                 }
             }
             Err(err) => {
